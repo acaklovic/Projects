@@ -1,0 +1,374 @@
+---
+title: "PSTAT 174 Final Project (edited)"
+author: "Esther Hsu"
+date: "3/9/2019"
+output: pdf_document
+---
+
+```{r}
+#install packages
+library(MASS)
+library(tseries)
+library(TSA)
+library(astsa)
+library(MASS)
+library(ggplot2)
+library(lmtest)
+library(forecast)
+```
+
+```{r}
+# plot original data
+gspc <- read.csv(file.choose())
+closepr<-gspc$Close
+close1<-ts(gspc$Close,frequency = 12)
+summary(close1)
+var(close1)
+plot(close1,xlab="Time",ylab="close price",main="GSPC")
+seasonplot(close1, 12, col=rainbow(3), year.labels=TRUE, main="Seasonal Plot")
+
+```
+```{r}
+decomp=decompose(close1)
+autoplot(decomp,main = "Decomposition_Plot")
+```
+
+```{r}
+acf(close1,lag.max = 100,col="red")
+pacf(close1,lag.max=100,col="blue")
+```
+```{r}
+# stablize variance
+# using box-cox
+require(MASS)
+bxTransform<-boxcox(closepr~as.numeric(1:length(closepr)))
+lambda<-bxTransform$x[which.max(bxTransform$y)]
+lambda
+Trans<-closepr^lambda #transfromation model
+
+newmodel<-ts(Trans[1:(length(closepr)-10)])
+
+plot(newmodel,xlab="Time",ylab="Close Price",main="lamda,GSPC")#ts plot of closepr^lamda 
+acf(newmodel,lag.max = 100,col="red",main="ACF_of Box_Cox Transformation")
+pacf(newmodel,lag.max=100,col="blue")
+
+```
+```{r}
+# De-seasonalize
+pricediff12<-diff(newmodel,lag = 12)
+plot(pricediff12,xlab="Time",ylab=" ",main="differenced at lag12")
+abline(lm(pricediff12~as.numeric(1:length(pricediff12))))
+var(pricediff12)
+```
+downward trend line on the graph. Next, we need to remove the trend based on the deseasonalized data we obtained.
+
+```{r}
+# De-Trend
+pricediff12diff1<-diff(pricediff12,lag=1)
+plot(pricediff12diff1,xlab='time',ylab='',main='pricediff12anddiff1')
+abline(lm(pricediff12diff1~as.numeric((1:length(pricediff12diff1)))))
+var(pricediff12diff1)
+```
+```{r}
+# De-trend Again
+pricediff12diff2<-diff(pricediff12diff1,lag=1)
+var(pricediff12diff2)
+#varicance increases after one more difference so the model should be D=1,d=1
+```
+varicance increases after one more difference so the model should be D=1,d=1 
+
+```{r}
+adf.test(pricediff12diff1, k=12)
+```
+p-value in the test is equal to 0.01, which is smaller than 0.05 in the confidence interval of 95%.
+Thus, we can reject the null hypothesis, and the time series is proven to be stationary
+
+
+Model Identification
+Identify P,Q
+```{r}
+op<-par(mfrow=c(1,2))
+acf(pricediff12diff1,lag.max = 100 )
+pacf(pricediff12diff1, lag.max = 100)
+par(op) #used to find large P and Q
+```
+- probably P=0~2, Q=0~2 or P=0~3, Q=0~3
+
+
+```{r}
+op<-par(mfrow=c(1,2))
+acf(pricediff12diff1,lag.max = 14 )
+pacf(pricediff12diff1, lag.max = 14)
+par(op)
+#lag p=1,q=1 small p and q
+```
+looks as if p=0 and q=1
+- Possible models after differencing and transforming: MA(1)
+
+Analysis of ACF and PACF
+P=2, Q=2
+```{r}
+# AIC
+library(forecast)
+
+# AICc (when P=2, Q=2) --> finding p,q (FIGURE 1)
+auto.arima(newmodel)
+
+AICc<-numeric()
+for (p in 0:1){
+  for (q in 0:1){
+    AICc<-c(AICc,sarima(newmodel,p,1,q,2,1,2,12,details = FALSE)$AICc)
+  }
+}
+AICc<-matrix(AICc,nrow=4,byrow = TRUE)
+rownames(AICc)<-c("q=0","q=1","q=2","q=3")
+colnames(AICc)<-c("p=0")
+AICc<-data.frame(AICc)
+AICc
+
+# smallest: p=0, q=0; second smallest: p=0, q=1
+```
+
+```{r}
+# BIC (P=2, Q=2), find p,q (FIGURE 2)
+BIC<-numeric()
+for (p in 0:1){
+  for (q in 0:1){
+    BIC<-c(BIC,sarima(newmodel,p,1,q,2,1,2,12,details = FALSE)$BIC)
+  }
+}
+BIC<-matrix(BIC,nrow=4,byrow = TRUE)
+rownames(BIC)<-c("q=0","q=1","q=2","q=3")
+colnames(BIC)<-c("p=0")
+BIC<-data.frame(BIC)
+BIC
+
+#smallest: p=0, q=0, second smallest: p=0, q=1
+```
+
+3) BEST MODELS (FINAL) are:
+## Model 1: SARIMA (0,1,1) x (2,1,2)s=12
+## Model 2: SARIMA (0,1,0) x (2,1,2)s=12
+---------------------------------------------------
+
+4) Estimate the coefficients
+- MLE
+
+```{r}
+# Model 01: SARIMA (0,1,1) x (2,1,2)s=12
+model01 = arima(newmodel, order=c(0,1,1), seasonal = list(order=c(2,1,2), period =12), method = "ML")
+model01
+```
+
+```{r}
+# Model 02: SARIMA (0,1,0) x (2,1,2)s=12
+model02 = arima(newmodel, order=c(0,1,0), seasonal = list(order=c(2,1,2), period =12), method = "ML")
+model02
+```
+
+### We choose model 1 as our final model (0,1,1)x(2,1,2)s=12
+
+(0,1,0)x(2,1,2)s=12 may be white noise (?)
+
+5) Diagnostic checks on our chosen model (change model if needed)
+
+```{r}
+# inputting the plot.roots function 
+plot.roots <- function(ar.roots=NULL, ma.roots=NULL, size=2, angles=FALSE, special=NULL, sqecial=NULL,my.pch=1,first.col="blue",second.col="red",main=NULL)
+{xylims <- c(-size,size)
+      omegas <- seq(0,2*pi,pi/500)
+      temp <- exp(complex(real=rep(0,length(omegas)),imag=omegas))
+      plot(Re(temp),Im(temp),typ="l",xlab="x",ylab="y",xlim=xylims,ylim=xylims,main=main)
+      abline(v=0,lty="dotted")
+      abline(h=0,lty="dotted")
+      if(!is.null(ar.roots))
+        {
+          points(Re(1/ar.roots),Im(1/ar.roots),col=first.col,pch=my.pch)
+          points(Re(ar.roots),Im(ar.roots),col=second.col,pch=my.pch)
+        }
+      if(!is.null(ma.roots))
+        {
+          points(Re(1/ma.roots),Im(1/ma.roots),pch="*",cex=1.5,col=first.col)
+          points(Re(ma.roots),Im(ma.roots),pch="*",cex=1.5,col=second.col)
+        }
+      if(angles)
+        {
+          if(!is.null(ar.roots))
+            {
+              abline(a=0,b=Im(ar.roots[1])/Re(ar.roots[1]),lty="dotted")
+              abline(a=0,b=Im(ar.roots[2])/Re(ar.roots[2]),lty="dotted")
+            }
+          if(!is.null(ma.roots))
+            {
+              sapply(1:length(ma.roots), function(j) abline(a=0,b=Im(ma.roots[j])/Re(ma.roots[j]),lty="dotted"))
+            }
+        }
+      if(!is.null(special))
+        {
+          lines(Re(special),Im(special),lwd=2)
+        }
+      if(!is.null(sqecial))
+        {
+          lines(Re(sqecial),Im(sqecial),lwd=2)
+        }
+        }
+```
+
+
+```{r}
+# MODEL 1: 
+# plotting roots --> checking causality and invertability
+model01 = arima(newmodel, order=c(0,1,1), seasonal = list(order=c(2,1,2), period =12), method = "ML")
+model01
+
+#source("plot.roots.R")
+#par(mfrow = c(1,2))
+plot.roots(NULL, polyroot(c(1, 0.0842)), main = "roots for MA part")
+plot.roots(NULL, polyroot(c(1, -0.8522)), main = "roots for SAR1 part")
+plot.roots(NULL, polyroot(c(1, 0.1209)), main = "roots for SAR2 part")
+plot.roots(NULL, polyroot(c(1, -0.0542)), main = "roots for SMA1 part")
+plot.roots(NULL, polyroot(c(1, -0.9458)), main = "roots for SMA2 part")
+
+```
+
+```{r}
+# MODEL 2: 
+# plotting roots --> checking causality and invertability
+model02 = arima(newmodel, order=c(0,1,0), seasonal = list(order=c(2,1,2), period =12), method = "ML")
+model02
+
+#source("plot.roots.R")
+#par(mfrow = c(1,3))
+plot.roots(NULL, polyroot(c(1, -0.8486)), main = "roots for SAR1 part")
+plot.roots(NULL, polyroot(c(1, 0.1194)), main = "roots for SAR2 part")
+plot.roots(NULL, polyroot(c(1, -0.0619)), main = "roots for SMA1 part")
+plot.roots(NULL, polyroot(c(1, -0.9380)), main = "roots for SMA2 part")
+
+```
+
+
+```{r}
+# To check NORMALITY
+
+# residuals for model 1:
+resid1 = residuals(model01)
+# residuals for model 2: 
+resid2 = residuals(model02)
+
+# MODEL 1
+op = par(mfrow = c(2,2))
+hist(resid1, main = "Histogram of Residuals for Model 1")
+qqnorm(resid1, main = "Normal Q-Q Plot for Model 1")
+qqline(resid1)
+
+# MODEL 2
+hist(resid2, main = "Histogram of Residuals for Model 2")
+qqnorm(resid2, main = "Normal Q-Q Plot for Model 2")
+qqline(resid2)
+par(op)
+
+```
+
+We can see on the right-hand side that we may have a possible outlier but otherwise the Normal Q-Q plots look good so we shouldn't have an issue with normality. Next, we use the Shapiro test to check on the normality. 
+
+```{r}
+# Shapiro Test for Model 1 and 2
+shapiro = matrix(c(shapiro.test(resid1)$statistic, shapiro.test(resid1)$p.value, shapiro.test(resid2)$statistic, shapiro.test(resid2)$p.value), nrow=2, byrow = T)
+
+# want a p-value greater than 0.05 (since H0: residuals are normal)
+rownames(shapiro) = c("Model 1", "Model 2")
+colnames(shapiro) = c("W Statistic", "P-value")
+shapiro_test = data.frame(shapiro)
+shapiro_test
+```
+From the Shapiro-Wilk test we found a p-value of 8.3206e-04 which rejects the null hypothesis at
+the standard 0.05 level. 
+This is due to some outliers and other components that we cannot use to
+analyze this model. 
+But as seen in the histogram and QQ plot the residuals lie on the normality line.
+
+```{r}
+# INDEPENDENCE/CORRELATION diagnostics
+
+# Model 1:
+b_1 = Box.test(resid1, lag = 12, type = "Box-Pierce", fitdf = 2)$p.value
+b_2 = Box.test(resid1, lag = 12, type = "Ljung-Box", fitdf = 2)$p.value
+b_1 # p-value is greater than 0.05; it's good
+b_2 # p-value is greater than 0.05; it's good
+
+# Model 2:
+b_3 = Box.test(resid2, lag = 12, type = "Box-Pierce", fitdf = 2)$p.value
+b_4 = Box.test(resid2, lag = 12, type = "Ljung-Box", fitdf = 2)$p.value
+b_3 # p-value is greater than 0.05; it's good
+b_4 # p-value is greater than 0.05; it's good
+
+```
+Both p-values are above our standard 0.05 significance level, thus we confirm our assumption that our residuals are uncorrelated for our model.
+
+```{r}
+# CONSTANT VARIANCE of residuals diagnostics:
+
+# model 1:
+par(mfrow = c(2,2))
+# acf 
+acf(resid1, main = "ACF Plot of Residuals for Model 1", lag.max = 30)
+# pacf
+pacf(resid1, lag.max = 30)
+title(main = "PACF Plot of Residuals for Model 1", outer = FALSE, line = 1)
+
+# model 2: 
+# acf 
+acf(resid2, main = "ACF Plot of Residuals for Model 2", lag.max = 30)
+# pacf
+pacf(resid2, lag.max = 30)
+title(main = "PACF Plot of Residuals for Model 2", outer = FALSE, line = 1)
+
+```
+Without some outliers, the residuals all lie in the confidence bounds.
+
+
+6) Forecasting
+-confidence intervals
+-return to original data
+
+```{r}
+# Forecasting based on Final Model
+pred.ts = predict(model01, n.ahead = 10)
+
+upper.ts = pred.ts$pred + 1.96*pred.ts$se # upper bound for CI for transformed data
+lower.ts = pred.ts$pred - 1.96*pred.ts$se # lower bound for CI for transformed data
+
+ts.plot(newmodel, xlim = c(1, length(newmodel) + 10), main = "Forecasting Based on Transformed Data", ylim=c(0.23, 0.31), ylab="")
+lines(upper.ts, col = "red", lty = "dashed")
+lines(lower.ts, col = "red", lty = "dashed")
+points ((length(newmodel) + 1) : (length(newmodel) + 10), pred.ts$pred, col = "red")
+
+```
+
+```{r}
+predict.origin = pred.ts$pred^(1/lambda) # back-transform in order to return to get predictions of the original time series
+
+# CI for original data
+upper.or = upper.ts^(1/lambda) # upper bound of the CI
+lower.or = lower.ts^(1/lambda)  # lower bound of the CI
+
+# Plot of forecast with original data
+close2 = ts(closepr)
+ts.plot(close2, xlim = c(1, length(close2)), main = "Forecasting with Original Data", ylab = "Closing value")
+lines(upper.or, col = "red", lty = "dashed")
+lines(lower.or, col = "red", lty = "dashed")
+points ((length(newmodel) + 1) : (length(newmodel) + 10), predict.origin, col = "red")
+
+```
+
+
+```{r}
+# zooming in
+ts.plot(close2, xlim = c(length(close2)-20, length(close2)),ylim=c(1500,3500), main = "Comparison between Observed and Forecasted Values", ylab = "Closing value")
+
+points((length(newmodel)+1):(length(newmodel)+10), close2[243:252], col = "blue")
+points((length(newmodel)+1):(length(newmodel)+10),predict.origin,col="dark green")
+lines((length(newmodel)+1):(length(newmodel)+10),upper.or,lty=2, col = "purple")
+lines((length(newmodel)+1):(length(newmodel)+10),lower.or,lty=2, col = "purple")
+
+```
